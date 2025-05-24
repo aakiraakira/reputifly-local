@@ -1,36 +1,52 @@
-from flask import Flask, request, jsonify
+# server.py
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import subprocess
-import os
+import subprocess, os
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="frontend", static_url_path="")
 CORS(app)
 
+# serve your React-style static site
+@app.route("/")
+def index():
+    return send_from_directory(app.static_folder, "index.html")
+
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory(app.static_folder, filename)
+
+# POST /scrape  → runs your map_scrape.py & returns its dump
 @app.route("/scrape", methods=["POST"])
 def scrape():
-    data = request.get_json()
-    q = data.get("query","").strip()
+    q = request.json.get("query", "").strip()
     if not q:
         return jsonify(error="Missing query"), 400
 
-    # run scraper
-    # note: require python on PATH; adjust to 'python3' if needed
+    # call your existing scraper
+    # note: we capture stdout so we can find the dump filename
     cmd = ["python", "map_scrape.py", q, "--headless"]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        return jsonify(error=e.stderr or "Scraper failed"), 500
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return jsonify(error=proc.stderr.strip()), 500
 
-    # last line of stdout is the filename
-    fname = result.stdout.strip().splitlines()[-1]
+    # map_scrape.py prints the dump filename when it finishes:
+    fname = proc.stdout.strip()
     if not os.path.exists(fname):
         return jsonify(error="Dump file missing"), 500
 
     with open(fname, encoding="utf-8") as f:
-        content = f.read()
-    # optional: delete the file after reading
-    os.remove(fname)
-    return jsonify(results=content)
+        data = f.read()
+
+    # (optional) clean up that dump file
+    try:
+        os.remove(fname)
+    except:
+        pass
+
+    return jsonify(results=data)
+    
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    # pick up the port Render hands us
+    port = int(os.environ.get("PORT", 3000))
+    app.run(host="0.0.0.0", port=port)
