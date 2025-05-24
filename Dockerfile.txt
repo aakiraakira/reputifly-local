@@ -1,0 +1,26 @@
+# build from a slim Python
+FROM python:3.11-slim
+
+# install Chrome & dependencies for headless Selenium
+RUN apt-get update && apt-get install -y wget unzip \
+    fonts-liberation libappindicator3-1 xdg-utils \
+    libasound2 libatk-bridge2.0-0 libnspr4 libnss3 \
+    libgbm1 libxss1 libgtk-3-0 libdrm2 libxcb1 libx11-xcb1 \
+  && wget -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+  && dpkg -i /tmp/chrome.deb || apt-get -f install -y \
+  && rm /tmp/chrome.deb \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# expose Chrome location for undetected-chromedriver
+ENV CHROME_BIN=/usr/bin/google-chrome-stable
+
+# copy your app into the container
+WORKDIR /usr/src/app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# now copy the rest
+COPY . .
+
+# render will set PORT; our server.py picks that up
+CMD ["python", "server.py"]
