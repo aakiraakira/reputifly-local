@@ -1,42 +1,40 @@
-from flask             import Flask, request, jsonify, send_from_directory
-from flask_cors        import CORS
-import subprocess, os
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import subprocess
 
-app = Flask(
-  __name__,
-  static_folder="frontend",      # <- your frontend dir
-  static_url_path=""             # <- serve at root
-)
+app = Flask(__name__, static_folder='frontend', static_url_path='')
 CORS(app)
 
-# 1) Serve your front end:
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
-def frontend(path):
-    file_path = os.path.join(app.static_folder, path)
-    if path and os.path.exists(file_path):
-        return send_from_directory(app.static_folder, path)
-    return send_from_directory(app.static_folder, "index.html")
+@app.route('/')
+def index():
+    return app.send_static_file('index.html')
 
-# 2) Your existing /scrape API:
-@app.route("/scrape", methods=["POST"])
+@app.route('/scrape', methods=['POST'])
 def scrape():
-    q = request.json.get("query", "").strip()
+    data = request.get_json() or {}
+    q = data.get('query','').strip()
     if not q:
-        return jsonify(error="Missing query"), 400
+        return jsonify(error="No query provided"), 400
 
-    # run your map_scrape.py
-    cmd = ["python", "map_scrape.py", q, "--headless"]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode != 0:
-        return jsonify(error=proc.stderr), 500
+    # call your map_scrape.py as a subprocess and capture its stdout
+    try:
+        result = subprocess.run(
+            ['python','map_scrape.py', q, '--headless'],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, timeout=120
+        )
+    except Exception as e:
+        return jsonify(error=str(e)), 500
 
-    # read the dump file
-    fname = "".join(c if c.isalnum() else "_" for c in q.lower()) + "_dump.txt"
-    if not os.path.exists(fname):
-        return jsonify(error="Dump not found"), 500
+    if result.returncode != 0:
+        return jsonify(error=result.stderr.splitlines()[-1]), 500
 
-    return jsonify(results=open(fname,encoding="utf8").read())
+    # map_scrape.py prints the filename of the dump
+    dump_file = result.stdout.strip()
+    try:
+        with open(dump_file, encoding='utf-8') as f:
+            text = f.read()
+    except FileNotFoundError:
+        return jsonify(error="Could not find output file"), 500
 
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=3000)
+    return jsonify(results=text)
