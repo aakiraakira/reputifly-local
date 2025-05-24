@@ -432,7 +432,7 @@
       if(!q) return;
       rawInput.value = '⏳ Fetching…';
       try {
-        const res = await fetch('https://reputifly-local.onrender.com/scrape', {
+        const res = await fetch('/scrape', {
           method:'POST',
           headers:{'Content-Type':'application/json'},
           body: JSON.stringify({query:q})
