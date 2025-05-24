@@ -1,26 +1,31 @@
-# build from a slim Python
+# 1. Base image
 FROM python:3.11-slim
 
-# install Chrome & dependencies for headless Selenium
-RUN apt-get update && apt-get install -y wget unzip \
-    fonts-liberation libappindicator3-1 xdg-utils \
-    libasound2 libatk-bridge2.0-0 libnspr4 libnss3 \
-    libgbm1 libxss1 libgtk-3-0 libdrm2 libxcb1 libx11-xcb1 \
-  && wget -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
-  && dpkg -i /tmp/chrome.deb || apt-get -f install -y \
-  && rm /tmp/chrome.deb \
-  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# 2. Install Chrome dependencies + the stable Chrome .deb
+RUN apt-get update && \
+    apt-get install -y wget gnupg ca-certificates \
+      libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+      libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+      libxfixes3 libgbm1 libpango1.0-0 libasound2 \
+      fonts-liberation lsb-release xdg-utils && \
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub \
+      | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" \
+      > /etc/apt/sources.list.d/google-chrome.list && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable && \
+    rm -rf /var/lib/apt/lists/*
 
-# expose Chrome location for undetected-chromedriver
+# 3. Tell Selenium where Chrome is
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
 
-# copy your app into the container
-WORKDIR /usr/src/app
-COPY requirements.txt .
+# 4. Install your Python dependencies
+WORKDIR /app
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# now copy the rest
+# 5. Copy your code
 COPY . .
 
-# render will set PORT; our server.py picks that up
-CMD ["python", "server.py"]
+# 6. Start your Flask app with gunicorn
+CMD ["gunicorn", "server:app", "--bind", "0.0.0.0:$PORT"]
