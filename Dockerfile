@@ -18,6 +18,8 @@ RUN apt-get update && \
 
 # 3) Tell undetected_chromedriver where Chrome lives
 ENV CHROME_BIN=/usr/bin/google-chrome-stable
+# (Optional but recommended for Chrome in containers)
+ENV UDC_NO_SANDBOX=1
 
 # 4) Install Python deps
 WORKDIR /app
@@ -27,5 +29,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 5) Copy your code
 COPY . .
 
-# 6) Launch your Flask app under Gunicorn
-CMD ["gunicorn", "server:app", "--bind", "0.0.0.0:$PORT"]
+# 6) Launch your Flask app under Gunicorn, with $PORT expansion
+#    Use shell form so Docker will expand $PORT from the env.
+CMD gunicorn server:app --bind 0.0.0.0:$PORT
