@@ -1,6 +1,2 @@
-Things to improve
-Scrape in JSON Format
-Integration of Proxies to Scrape more data per unit time
-Different type of exports (csv,pdf,json,word,excel etc)
-Export for specific types of business
+start server.py then run live server from index.html go to local host enter your query and search wait 1-2 mins and click extract
 
