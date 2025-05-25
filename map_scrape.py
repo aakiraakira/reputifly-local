@@ -7,11 +7,13 @@ Usage:
   python map_scrape.py "maid agency singapore" --headless
 
 This script:
-  1. Opens Google Maps for your query
-  2. Locates the left-hand results pane (via multiple fallbacks)
-  3. JS-scrolls it until “You’ve reached the end of the list” (or no more new items)
-  4. Extracts pane.text (all visible listings)
-  5. Saves to: <sanitized_query>_dump.txt
+ 1. Opens Google Maps for your query
+ 2. Disables images & sets a large viewport for faster loads
+ 3. Locates the left-hand results pane via multiple fallbacks
+ 4. Scrolls the pane until Google signals end-of-list or no more new items
+ 5. Extracts the full pane.text dump
+ 6. Saves to: <sanitized_query>_dump.txt
+ 7. Prints the filename for your front end to pick up
 """
 
 import time
@@ -23,95 +25,85 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
 
 def sanitize_filename(s: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in s.strip().lower())
+
 
 def init_driver(headless: bool):
     opts = uc.ChromeOptions()
     if headless:
         opts.headless = True
-
-    # ─────── BLOCK IMAGES ───────
-    # (prevents Chrome from downloading any images on the page)
-    prefs = {"profile.managed_default_content_settings.images": 2}
-    opts.add_experimental_option("prefs", prefs)
-
-    # stealth flags
+    # speed & stealth flags
     opts.add_argument("--disable-gpu")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--blink-settings=imagesEnabled=false")  # disable images
+    opts.add_argument("--window-size=1920,1080")               # large viewport
+    opts.add_argument("--disable-dev-shm-usage")               # stability
     return uc.Chrome(options=opts)
 
+
 def find_results_pane(driver, timeout=20):
-    candidates = [
-        (By.CSS_SELECTOR, "div.widget-pane-content.scrollable-y"),      # older Maps
-        (By.CSS_SELECTOR, "div.section-layout.section-scrollbox.scrollable-y"),  # newer Maps
-        (By.CSS_SELECTOR, "div.section-scrollbox"),                      # fallback
-        (By.XPATH, "//div[@role='feed']"),                              # feed role
-        (By.XPATH, "//div[@role='region']")                             # region role
+    selectors = [
+        (By.CSS_SELECTOR, "div.widget-pane-content.scrollable-y"),
+        (By.CSS_SELECTOR, "div.section-layout.section-scrollbox.scrollable-y"),
+        (By.XPATH, "//div[@role='feed']"),
+        (By.XPATH, "//div[@role='region']"),
     ]
-    for by, sel in candidates:
+    for by, sel in selectors:
         try:
-            pane = WebDriverWait(driver, timeout).until(
+            return WebDriverWait(driver, timeout).until(
                 EC.presence_of_element_located((by, sel))
             )
-            return pane
-        except Exception:
-            pass
-    raise RuntimeError("❌ Could not locate the Maps results pane; selectors may need updating.")
+        except TimeoutException:
+            continue
+    raise RuntimeError("Could not locate the Maps results pane; selectors may need updating.")
 
-def scroll_until_end(driver, pane, timeout=60, pause=0.1):
-    """
-    JS-scroll the pane until:
-      • pane.text contains “You’ve reached the end of the list”
-      • OR scrollHeight stops increasing
-      • OR timeout
-    Uses a very short pause between scrolls for speed.
-    """
+
+def scroll_until_end(driver, pane, timeout=90, pause=1.0):
     last_h = driver.execute_script("return arguments[0].scrollHeight", pane)
-    start  = time.time()
-
+    start = time.time()
     while True:
-        # scroll to bottom
         driver.execute_script("arguments[0].scrollTo(0, arguments[0].scrollHeight);", pane)
         time.sleep(pause)
-
         new_h = driver.execute_script("return arguments[0].scrollHeight", pane)
-        txt   = pane.text
-
-        if "You've reached the end of the list" in txt:
+        text = pane.text
+        # detect Google end-of-list message
+        if "reached the end of the list" in text.lower():
             break
-        if new_h == last_h:
+        # if no height change and timed out
+        if new_h == last_h and time.time() - start > timeout:
             break
-        if time.time() - start > timeout:
-            break
-
         last_h = new_h
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Headless Google Maps scraper")
-    parser.add_argument("query", help="Search term (e.g. 'cleaning services')")
+    parser = argparse.ArgumentParser(description="Headless Google Maps scraper for SG queries")
+    parser.add_argument("query", help="Search term (e.g. 'cleaning services singapore') — include 'singapore'")
     parser.add_argument("--headless", action="store_true", help="Run headless")
     args = parser.parse_args()
 
     driver = init_driver(headless=args.headless)
+    base_url = "https://www.google.com/maps/search/"
+    try:
+        url = base_url + urllib.parse.quote_plus(args.query) + "/"
+        driver.get(url)
 
-    url = "https://www.google.com/maps/search/" + urllib.parse.quote_plus(args.query) + "/"
-    driver.get(url)
+        pane = find_results_pane(driver, timeout=30)
+        scroll_until_end(driver, pane, timeout=90, pause=1.0)
 
-    pane = find_results_pane(driver, timeout=30)
-    # pause reduced from 1.0 → 0.1 to speed up scrolling
-    scroll_until_end(driver, pane, timeout=75, pause=0.1)
+        # raw dump
+        raw = pane.text
+        fname = sanitize_filename(args.query) + "_dump.txt"
+        with open(fname, "w", encoding="utf-8") as f:
+            f.write(raw)
 
-    text = pane.text
-    fname = sanitize_filename(args.query) + "_dump.txt"
-    with open(fname, "w", encoding="utf-8") as f:
-        f.write(text)
-
-    driver.quit()
-    # print the filename so your server.py can pick it up
-    print(fname)
+        print(fname)
+    finally:
+        driver.quit()
 
 if __name__ == "__main__":
     main()
